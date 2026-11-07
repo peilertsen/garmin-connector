@@ -1,0 +1,16 @@
+{
+  "userProfilePk": 12345678,
+  "hrvSummary": {
+    "calendarDate": "2026-11-07",
+    "weeklyAvg": 60,
+    "lastNightAvg": 62,
+    "lastNight5MinHigh": 81,
+    "baseline": { "lowUpper": 50, "balancedLow": 54, "balancedUpper": 68, "markerValue": 0.45 },
+    "status": "BALANCED",
+    "feedbackPhrase": "HRV_BALANCED_2",
+    "createTimeStamp": "2026-11-07T06:20:00.0"
+  },
+  "hrvReadings": [
+    { "hrvValue": 58, "readingTimeGMT": "2026-11-06T22:35:00.0", "readingTimeLocal": "2026-11-06T23:35:00.0" }
+  ]
+}

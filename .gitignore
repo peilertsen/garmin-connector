@@ -1,0 +1,8 @@
+/target
+# Never commit personal Garmin data or login tokens
+tokens.json
+*.tokens.json
+garmin_tokens.json
+/data/
+.env
+.DS_Store

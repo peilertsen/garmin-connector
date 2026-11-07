@@ -1,0 +1,31 @@
+[package]
+name = "garmin-mcp"
+description = "MCP server that gives Claude access to your Garmin sleep, Body Battery and HRV data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "garmin-mcp"
+path = "src/main.rs"
+
+[dependencies]
+garmin-connect = { path = "../garmin-connect" }
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+dirs.workspace = true
+futures.workspace = true
+rmcp.workspace = true
+rpassword.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+wiremock.workspace = true
