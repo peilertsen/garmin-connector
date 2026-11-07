@@ -1,5 +1,7 @@
 # garmin-connector
 
+[![CI](https://github.com/peilertsen/garmin-connector/actions/workflows/ci.yml/badge.svg)](https://github.com/peilertsen/garmin-connector/actions/workflows/ci.yml)
+
 Give Claude read access to your Garmin **sleep**, **HRV** and **Body Battery** data, so your
 morning briefing can tell you how you recovered and how to approach the day.
 
