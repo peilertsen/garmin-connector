@@ -22,10 +22,16 @@ except for the requests to Garmin itself.
 You need a Rust toolchain ([rustup.rs](https://rustup.rs)).
 
 ```bash
-cargo install --path crates/garmin-mcp
+cargo install --locked --git https://github.com/peilertsen/garmin-connector garmin-mcp
 ```
 
-This puts `garmin-mcp` in `~/.cargo/bin`.
+Or, from a clone of this repository:
+
+```bash
+cargo install --locked --path crates/garmin-mcp
+```
+
+Either way, `garmin-mcp` ends up in `~/.cargo/bin`.
 
 ## Log in (once)
 
@@ -49,14 +55,17 @@ The first `today` downloads 29 days (last night plus a 28-day baseline), which t
 
 ## Connect it to Claude Desktop
 
-Open Claude Desktop's config file:
+**Quit Claude Desktop first (⌘Q).** It reads its config only at startup and writes its own
+copy back while running, so changes made while it is open get overwritten.
+
+Then open its config file:
 
 ```text
 ~/Library/Application Support/Claude/claude_desktop_config.json
 ```
 
-Add the server under `mcpServers` (use the full path to the binary, since Claude Desktop does
-not read your shell's `PATH`):
+Add the server under `mcpServers`. Use the full path to the binary, because Claude Desktop
+does not read your shell's `PATH`:
 
 ```json
 {
@@ -69,7 +78,9 @@ not read your shell's `PATH`):
 }
 ```
 
-Restart Claude Desktop. In a new chat, ask *"How did I sleep last night?"*
+Start Claude Desktop again. `garmin` should be listed under **Settings → Developer**. In a new
+chat, ask *"How did I sleep last night?"* If it doesn't appear, the server's log is at
+`~/Library/Logs/Claude/mcp-server-garmin.log`.
 
 ## Tools Claude gets
 
@@ -138,11 +149,24 @@ cargo test            # all tests use a mock Garmin server; nothing touches the 
 cargo clippy --all-targets
 ```
 
-The login flow follows the maintained Python library
-[python-garminconnect](https://github.com/cyberjunky/python-garminconnect). When Garmin
-changes something, its changelog is the first place to look. The constants are in
+When Garmin changes something, the changelog of python-garminconnect (see below) is the first
+place to look. The client identity and URLs are in
 [`crates/garmin-connect/src/endpoints.rs`](crates/garmin-connect/src/endpoints.rs).
+
+Never paste real Garmin responses, tokens or log output into issues or test fixtures without
+removing personal data first. The fixtures in `crates/garmin-connect/tests/fixtures` are
+made up.
+
+## Acknowledgements
+
+The login flow, client identifiers and endpoints follow
+[python-garminconnect](https://github.com/cyberjunky/python-garminconnect) by Ron Klinkien
+and contributors (MIT licensed). Its maintainers do the hard work of keeping up with Garmin's
+login changes. This project is a separate Rust implementation and shares no code with it.
 
 ## License
 
 Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option.
+
+Unless you explicitly state otherwise, any contribution you submit for inclusion in this
+project is dual licensed as above, without any additional terms or conditions.

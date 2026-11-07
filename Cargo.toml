@@ -7,6 +7,8 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.88"
+repository = "https://github.com/peilertsen/garmin-connector"
+authors = ["Pål Eilertsen"]
 
 [workspace.dependencies]
 anyhow = "1"

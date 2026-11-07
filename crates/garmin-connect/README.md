@@ -35,4 +35,8 @@ let battery = client.body_battery(date).await?;
   to keep tokens in a keychain or a database instead.
 - **Errors you can act on:** `InvalidCredentials`, `RateLimited`, `Blocked`, `NotLoggedIn`, ...
 
+The login flow follows [python-garminconnect](https://github.com/cyberjunky/python-garminconnect)
+(MIT), which does the hard work of tracking Garmin's changes. For an MCP server built on this
+crate, see [garmin-connector](https://github.com/peilertsen/garmin-connector).
+
 License: MIT OR Apache-2.0.

@@ -5,13 +5,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+readme = "../../README.md"
+keywords = ["garmin", "mcp", "claude", "sleep", "hrv"]
+categories = ["command-line-utilities"]
+repository.workspace = true
+authors.workspace = true
 
 [[bin]]
 name = "garmin-mcp"
 path = "src/main.rs"
 
 [dependencies]
-garmin-connect = { path = "../garmin-connect" }
+garmin-connect = { path = "../garmin-connect", version = "0.1.0" }
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
