@@ -65,7 +65,8 @@ copy back while running, so changes made while it is open get overwritten.
 Then open its config file:
 
 ```text
-~/Library/Application Support/Claude/claude_desktop_config.json
+macOS:    ~/Library/Application Support/Claude/claude_desktop_config.json
+Windows:  %APPDATA%\Claude\claude_desktop_config.json
 ```
 
 Add the server under `mcpServers`. Use the full path to the binary, because Claude Desktop
@@ -81,6 +82,9 @@ does not read your shell's `PATH`:
   }
 }
 ```
+
+On Windows the command is `C:\\Users\\YOU\\.cargo\\bin\\garmin-mcp.exe` (with the backslashes
+doubled, as JSON requires).
 
 Start Claude Desktop again. `garmin` should be listed under **Settings → Developer**. In a new
 chat, ask *"How did I sleep last night?"* If it doesn't appear, the server's log is at
@@ -106,12 +110,19 @@ Add something like this to your briefing prompt:
 
 ## Where your data lives
 
-Everything is in one folder, by default `~/Library/Application Support/garmin-connector/`
-on macOS (change it with `--home` or `GARMIN_CONNECTOR_HOME`):
+Everything is in one folder. Change it with `--home` or `GARMIN_CONNECTOR_HOME`; the defaults are:
+
+```text
+macOS:    ~/Library/Application Support/garmin-connector/
+Linux:    ~/.local/share/garmin-connector/   (or $XDG_DATA_HOME/garmin-connector/)
+Windows:  %APPDATA%\garmin-connector\
+```
+
+`garmin-mcp status` prints the folder in use. It is laid out like this:
 
 ```text
 garmin-connector/
-  tokens.json                 login tokens (owner-only permissions)
+  tokens.json                 login tokens (owner-only permissions on macOS and Linux)
   data/
     sleep/2026-11-07.json
     hrv/2026-11-07.json
@@ -154,6 +165,8 @@ Set `RUST_LOG=debug` to see what is happening (logs go to stderr).
 cargo test            # all tests use a mock Garmin server; nothing touches the network
 cargo clippy --all-targets
 ```
+
+Developed and used on macOS. CI also runs the tests on Linux. Windows should work but is untested.
 
 When Garmin changes something, the changelog of python-garminconnect (see below) is the first
 place to look. The client identity and URLs are in

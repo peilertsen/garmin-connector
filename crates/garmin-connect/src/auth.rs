@@ -54,7 +54,7 @@ impl MfaMethod {
     }
 }
 
-/// Options for [`login`].
+/// Options for [`GarminClient::login_with_options`](crate::GarminClient::login_with_options).
 #[derive(Debug, Clone)]
 pub struct LoginOptions {
     /// Pause between loading the sign-in page and submitting it. Submitting
