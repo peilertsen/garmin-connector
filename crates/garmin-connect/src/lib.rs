@@ -1,4 +1,5 @@
-//! Unofficial async client for Garmin Connect wellness data.
+//! Unofficial async client for Garmin Connect wellness data: sleep, HRV,
+//! Body Battery, stress, resting heart rate, SpO2, respiration and Training Readiness.
 //!
 //! Garmin offers no API for personal use, so this crate logs in the way the
 //! Garmin Connect mobile app does and reads the same endpoints. It can break
@@ -36,5 +37,7 @@ pub use auth::{LoginOptions, MfaMethod};
 pub use client::GarminClient;
 pub use endpoints::Endpoints;
 pub use error::{Error, Result};
-pub use models::{BodyBatteryDay, HrvDay, SleepDay};
+pub use models::{
+    BodyBatteryDay, BodyBatteryEvent, DailySummary, HrvDay, ReadinessFactor, SleepDay, TrainingReadiness,
+};
 pub use tokens::{FileTokenStore, MemoryTokenStore, TokenStore, Tokens};

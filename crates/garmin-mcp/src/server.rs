@@ -16,9 +16,10 @@ use crate::recovery::{MAX_RANGE_DAYS, Recovery, strip_series};
 use crate::store::Metric;
 
 const INSTRUCTIONS: &str = "\
-Read-only access to the user's Garmin sleep, HRV and Body Battery data. \
-Start with get_recovery_snapshot for a morning check-in: it returns last night's \
-numbers next to the user's own 28-day baseline. Use get_recovery_history for trends \
+Read-only access to the user's Garmin wellness data: sleep, HRV, Training Readiness, \
+Body Battery (with what drained or recharged it), stress, resting heart rate, SpO2 and \
+respiration. Start with get_recovery_snapshot for a morning check-in: it returns last \
+night's and today's numbers next to the user's own 28-day baseline. Use get_recovery_history for trends \
 and correlations. Dates are the day the user woke up. Training data is not here; \
 it comes from Strava. These are wellness numbers from a consumer watch, not medical \
 measurements.";
@@ -45,7 +46,8 @@ pub struct HistoryParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RawParams {
-    /// Which Garmin dataset: sleep, hrv or body_battery.
+    /// Which Garmin dataset: sleep, hrv, body_battery, daily_summary (stress, resting HR,
+    /// SpO2, respiration, Body Battery events) or training_readiness.
     pub metric: Metric,
     /// Day, YYYY-MM-DD. Defaults to today.
     pub date: Option<NaiveDate>,
@@ -76,10 +78,13 @@ impl GarminServer {
         Self { recovery, tool_router: Self::tool_router() }
     }
 
-    #[tool(description = "Last night's sleep (duration, score, stages, bedtime, resting HR), HRV \
-                       (last night, weekly average, status, personal balanced range) and Body \
-                       Battery (current, peak, low), compared with the user's 28-day baseline. \
-                       Use this for daily briefings and 'how did I recover' questions.")]
+    #[tool(description = "Morning recovery check: last night's sleep (duration, score, stages, \
+                       bedtime), HRV (last night, weekly average, status, balanced range), Garmin \
+                       Training Readiness (score, level, recovery time, contributing factors), Body \
+                       Battery (now, at wake, peak, low, and the events that charged or drained \
+                       it), stress (today so far plus yesterday's full day), resting heart rate, \
+                       SpO2 and respiration, compared with the user's 28-day baseline. Use this \
+                       for daily briefings and 'how did I recover' questions.")]
     async fn get_recovery_snapshot(
         &self,
         Parameters(p): Parameters<SnapshotParams>,
@@ -91,8 +96,8 @@ impl GarminServer {
         }
     }
 
-    #[tool(description = "One row per day of sleep, HRV and Body Battery summaries for a date range \
-                       (at most 92 days). Use for trends, weekly reviews, and looking for patterns, \
+    #[tool(description = "One row per day of sleep, HRV, Training Readiness, Body Battery, stress, \
+                       resting HR, SpO2 and respiration for a date range (at most 92 days). Use for trends, weekly reviews, and looking for patterns, \
                        e.g. comparing nights before headaches or hard training days.")]
     async fn get_recovery_history(
         &self,
@@ -111,7 +116,7 @@ impl GarminServer {
     }
 
     #[tool(description = "Garmin's original JSON for one dataset and day, for fields the summaries \
-                       don't include (e.g. sleep sub-scores, SpO2 details, Body Battery events). \
+                       don't include (e.g. sleep sub-scores, hourly SpO2, steps, intensity minutes). \
                        Long per-minute arrays are omitted unless include_series is true.")]
     async fn get_garmin_raw(
         &self,

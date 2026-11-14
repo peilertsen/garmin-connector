@@ -1,12 +1,15 @@
 //! Combines the Garmin client with the local store: fetches what is missing
 //! or stale, and turns stored days into the summaries Claude sees.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
 use futures::stream::{self, StreamExt};
-use garmin_connect::{BodyBatteryDay, GarminClient, HrvDay, SleepDay};
+use garmin_connect::{
+    BodyBatteryDay, BodyBatteryEvent, DailySummary, GarminClient, HrvDay, SleepDay, TrainingReadiness,
+};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -22,6 +25,9 @@ pub const BASELINE_DAYS: i64 = 28;
 pub const MAX_RANGE_DAYS: i64 = 92;
 /// Parallel requests when backfilling history.
 const CONCURRENCY: usize = 4;
+/// Metrics fetched one request per day.
+const PER_DAY_METRICS: [Metric; 4] =
+    [Metric::Sleep, Metric::Hrv, Metric::DailySummary, Metric::TrainingReadiness];
 
 /// Where "now" and "today" come from. Swappable so tests are deterministic.
 pub trait Clock: Send + Sync {
@@ -74,23 +80,35 @@ impl Recovery {
     }
 
     async fn fetch_one(&self, metric: Metric, date: NaiveDate) -> Result<DayRecord> {
-        let record = match metric {
+        let c = &self.client;
+        let (raw, summary) = match metric {
             Metric::Sleep => {
-                let raw = self.client.sleep_raw(date).await?;
-                let summary = raw.as_ref().and_then(|r| SleepDay::from_raw(date, r));
-                self.record(date, serde_json::to_value(summary)?, raw)
+                let raw = c.sleep_raw(date).await?;
+                let s = raw.as_ref().and_then(|r| SleepDay::from_raw(date, r));
+                (raw, serde_json::to_value(s)?)
             }
             Metric::Hrv => {
-                let raw = self.client.hrv_raw(date).await?;
-                let summary = raw.as_ref().and_then(|r| HrvDay::from_raw(date, r));
-                self.record(date, serde_json::to_value(summary)?, raw)
+                let raw = c.hrv_raw(date).await?;
+                let s = raw.as_ref().and_then(|r| HrvDay::from_raw(date, r));
+                (raw, serde_json::to_value(s)?)
             }
             Metric::BodyBattery => {
-                let raw = self.client.body_battery_raw(date, date).await?;
-                let summary = raw.as_ref().and_then(|r| BodyBatteryDay::from_raw(date, r));
-                self.record(date, serde_json::to_value(summary)?, raw)
+                let raw = c.body_battery_raw(date, date).await?;
+                let s = raw.as_ref().and_then(|r| BodyBatteryDay::from_raw(date, r));
+                (raw, serde_json::to_value(s)?)
+            }
+            Metric::DailySummary => {
+                let raw = c.daily_summary_raw(date).await?;
+                let s = raw.as_ref().and_then(|r| DailySummary::from_raw(date, r));
+                (raw, serde_json::to_value(s)?)
+            }
+            Metric::TrainingReadiness => {
+                let raw = c.training_readiness_raw(date).await?;
+                let s = raw.as_ref().and_then(|r| TrainingReadiness::from_raw(date, r));
+                (raw, serde_json::to_value(s)?)
             }
         };
+        let record = self.record(date, summary, raw);
         self.store.write(metric, &record)?;
         Ok(record)
     }
@@ -146,7 +164,7 @@ impl Recovery {
         }
 
         let mut jobs = Vec::new();
-        for metric in [Metric::Sleep, Metric::Hrv] {
+        for metric in PER_DAY_METRICS {
             jobs.extend(needs(metric)?.into_iter().map(|d| (metric, d)));
         }
         let results: Vec<_> = stream::iter(jobs)
@@ -168,13 +186,33 @@ impl Recovery {
         Ok(warnings)
     }
 
-    /// The stored summaries for one day (no network access).
-    pub fn stored_day(&self, date: NaiveDate) -> Result<DayView> {
-        let raw = |m| -> Result<Option<Value>> { Ok(self.store.read(m, date)?.map(|r| r.raw)) };
-        let sleep = raw(Metric::Sleep)?.and_then(|r| SleepDay::from_raw(date, &r));
-        let hrv = raw(Metric::Hrv)?.and_then(|r| HrvDay::from_raw(date, &r));
-        let bb = raw(Metric::BodyBattery)?.and_then(|r| BodyBatteryDay::from_raw(date, &r));
-        Ok(DayView::new(date, sleep.as_ref(), hrv.as_ref(), bb.as_ref()))
+    fn stored_raw(&self, metric: Metric, date: NaiveDate) -> Result<Option<Value>> {
+        Ok(self.store.read(metric, date)?.map(|r| r.raw).filter(|r| !r.is_null()))
+    }
+
+    /// The stored summaries for one day (no network access). Body Battery
+    /// events are only included when `with_events` is set, to keep long
+    /// histories compact.
+    pub fn stored_day(&self, date: NaiveDate, with_events: bool) -> Result<DayView> {
+        let sleep = self.stored_raw(Metric::Sleep, date)?.and_then(|r| SleepDay::from_raw(date, &r));
+        let hrv = self.stored_raw(Metric::Hrv, date)?.and_then(|r| HrvDay::from_raw(date, &r));
+        let bb = self.stored_raw(Metric::BodyBattery, date)?.and_then(|r| BodyBatteryDay::from_raw(date, &r));
+        let daily =
+            self.stored_raw(Metric::DailySummary, date)?.and_then(|r| DailySummary::from_raw(date, &r));
+        let readiness = self
+            .stored_raw(Metric::TrainingReadiness, date)?
+            .and_then(|r| TrainingReadiness::from_raw(date, &r));
+        Ok(DayView::new(
+            date,
+            Sources {
+                sleep: sleep.as_ref(),
+                hrv: hrv.as_ref(),
+                body_battery: bb.as_ref(),
+                daily: daily.as_ref(),
+                readiness: readiness.as_ref(),
+            },
+            with_events,
+        ))
     }
 
     /// Everything the morning briefing needs for `date`.
@@ -182,14 +220,15 @@ impl Recovery {
         let baseline_start = date - Duration::days(BASELINE_DAYS);
         let mut notes = self.ensure(baseline_start, date).await?;
 
-        let day = self.stored_day(date)?;
+        let day = self.stored_day(date, true)?;
         let history: Vec<DayView> = baseline_start
             .iter_days()
             .take_while(|d| *d < date)
-            .map(|d| self.stored_day(d))
+            .map(|d| self.stored_day(d, false))
             .collect::<Result<_>>()?;
+        let stress_yesterday = history.last().and_then(|d| d.stress.clone());
         let baseline = Baseline::from_days(&history);
-        let vs_baseline = Comparison::new(&day, &baseline);
+        let vs_baseline = Comparison::new(&day, stress_yesterday.as_ref(), &baseline);
 
         if day.sleep.is_none() {
             notes.push("No sleep recorded for last night (watch not worn or not synced yet).".into());
@@ -197,7 +236,14 @@ impl Recovery {
         if day.hrv.is_none() {
             notes.push("No HRV reading for last night. Some watches don't record HRV.".into());
         }
-        Ok(Snapshot { day, baseline_28d: baseline, vs_baseline, notes })
+        if day.training_readiness.is_none() {
+            notes
+                .push("No Training Readiness yet (calculated after waking; not all watches have it).".into());
+        }
+        if date == self.clock.today() && day.stress.is_some() {
+            notes.push("`stress` covers today so far; `stress_yesterday` is the last full day.".into());
+        }
+        Ok(Snapshot { day, stress_yesterday, baseline_28d: baseline, vs_baseline, notes })
     }
 
     /// One summary per day for `start..=end`.
@@ -209,8 +255,11 @@ impl Recovery {
             bail!("range too long: at most {MAX_RANGE_DAYS} days per request");
         }
         let notes = self.ensure(start, end).await?;
-        let days =
-            start.iter_days().take_while(|d| *d <= end).map(|d| self.stored_day(d)).collect::<Result<_>>()?;
+        let days = start
+            .iter_days()
+            .take_while(|d| *d <= end)
+            .map(|d| self.stored_day(d, false))
+            .collect::<Result<_>>()?;
         Ok(History { days, notes })
     }
 
@@ -250,12 +299,9 @@ pub struct SleepView {
     pub light_min: Option<i64>,
     pub rem_min: Option<i64>,
     pub awake_min: Option<i64>,
-    pub resting_hr: Option<i64>,
     pub avg_overnight_hrv_ms: Option<f64>,
     pub body_battery_recharged: Option<i64>,
     pub avg_sleep_stress: Option<f64>,
-    pub avg_spo2: Option<f64>,
-    pub avg_respiration: Option<f64>,
 }
 
 impl From<&SleepDay> for SleepView {
@@ -270,12 +316,9 @@ impl From<&SleepDay> for SleepView {
             light_min: minutes(s.light_seconds),
             rem_min: minutes(s.rem_seconds),
             awake_min: minutes(s.awake_seconds),
-            resting_hr: s.resting_heart_rate,
             avg_overnight_hrv_ms: s.avg_overnight_hrv,
             body_battery_recharged: s.body_battery_change,
             avg_sleep_stress: s.avg_sleep_stress,
-            avg_spo2: s.avg_spo2,
-            avg_respiration: s.avg_respiration,
         }
     }
 }
@@ -304,26 +347,142 @@ impl From<&HrvDay> for HrvView {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct FactorView {
+    /// 0-100, higher is better for readiness.
+    pub percent: Option<i64>,
+    pub rating: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ReadinessView {
+    pub score: Option<i64>,
+    pub level: Option<String>,
+    pub feedback: Option<String>,
+    pub recovery_time_hours: Option<f64>,
+    pub acute_load: Option<i64>,
+    pub factors: BTreeMap<String, FactorView>,
+    pub calculated_at: Option<String>,
+}
+
+impl From<&TrainingReadiness> for ReadinessView {
+    fn from(t: &TrainingReadiness) -> Self {
+        Self {
+            score: t.score,
+            level: t.level.clone(),
+            feedback: t.feedback_short.clone(),
+            recovery_time_hours: t.recovery_time_minutes.map(|m| round1(m as f64 / 60.0)),
+            acute_load: t.acute_load,
+            factors: t
+                .factors
+                .iter()
+                .map(|f| (f.name.clone(), FactorView { percent: f.percent, rating: f.feedback.clone() }))
+                .collect(),
+            // "2026-11-07T07:35:00.0" -> "07:35"
+            calculated_at: t.calculated_at_local.as_deref().and_then(|s| s.get(11..16)).map(str::to_owned),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct EventView {
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    pub start: Option<String>,
+    pub duration_min: Option<i64>,
+    /// Change in Body Battery: positive charged, negative drained.
+    pub impact: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feedback: Option<String>,
+}
+
+impl From<&BodyBatteryEvent> for EventView {
+    fn from(e: &BodyBatteryEvent) -> Self {
+        Self {
+            kind: e.event_type.clone(),
+            start: e.start_gmt.map(|t| t.with_timezone(&Local).format("%H:%M").to_string()),
+            duration_min: minutes(e.duration_seconds),
+            impact: e.impact,
+            activity: e.activity_name.clone(),
+            feedback: e.feedback.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct BodyBatteryView {
     pub latest: Option<i64>,
     pub latest_at: Option<String>,
+    pub at_wake: Option<i64>,
     pub highest: Option<i64>,
     pub lowest: Option<i64>,
     pub charged: Option<i64>,
     pub drained: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events: Option<Vec<EventView>>,
 }
 
-impl From<&BodyBatteryDay> for BodyBatteryView {
-    fn from(b: &BodyBatteryDay) -> Self {
-        Self {
-            latest: b.latest_level,
-            latest_at: local_time(b.latest_at_ms),
-            highest: b.highest,
-            lowest: b.lowest,
-            charged: b.charged,
-            drained: b.drained,
-        }
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct StressView {
+    /// 0-100: 0-25 rest, 26-50 low, 51-75 medium, 76-100 high.
+    pub avg: Option<i64>,
+    pub max: Option<i64>,
+    pub label: Option<String>,
+    pub rest_min: Option<i64>,
+    pub low_min: Option<i64>,
+    pub medium_min: Option<i64>,
+    pub high_min: Option<i64>,
+    pub activity_min: Option<i64>,
+}
+
+impl StressView {
+    fn from_daily(d: &DailySummary) -> Option<Self> {
+        d.avg_stress?;
+        Some(Self {
+            avg: d.avg_stress,
+            max: d.max_stress,
+            label: d.stress_label.clone(),
+            rest_min: minutes(d.rest_stress_seconds),
+            low_min: minutes(d.low_stress_seconds),
+            medium_min: minutes(d.medium_stress_seconds),
+            high_min: minutes(d.high_stress_seconds),
+            activity_min: minutes(d.activity_stress_seconds),
+        })
     }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RestingHrView {
+    pub bpm: Option<i64>,
+    pub avg_7d: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Spo2View {
+    /// Percent.
+    pub sleep_avg: Option<f64>,
+    pub day_avg: Option<f64>,
+    pub lowest: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RespirationView {
+    /// Breaths per minute.
+    pub sleep_avg: Option<f64>,
+    pub waking_avg: Option<f64>,
+    pub lowest: Option<f64>,
+    pub highest: Option<f64>,
+}
+
+/// What one day's stored files provide (any of them may be missing).
+#[derive(Default, Clone, Copy)]
+pub struct Sources<'a> {
+    pub sleep: Option<&'a SleepDay>,
+    pub hrv: Option<&'a HrvDay>,
+    pub body_battery: Option<&'a BodyBatteryDay>,
+    pub daily: Option<&'a DailySummary>,
+    pub readiness: Option<&'a TrainingReadiness>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -331,12 +490,67 @@ pub struct DayView {
     pub date: NaiveDate,
     pub sleep: Option<SleepView>,
     pub hrv: Option<HrvView>,
+    pub training_readiness: Option<ReadinessView>,
     pub body_battery: Option<BodyBatteryView>,
+    pub stress: Option<StressView>,
+    pub resting_hr: Option<RestingHrView>,
+    pub spo2: Option<Spo2View>,
+    pub respiration: Option<RespirationView>,
+}
+
+/// `Some(x)` unless every field is empty.
+fn non_empty<T>(value: T, any: bool) -> Option<T> {
+    any.then_some(value)
 }
 
 impl DayView {
-    fn new(date: NaiveDate, s: Option<&SleepDay>, h: Option<&HrvDay>, b: Option<&BodyBatteryDay>) -> Self {
-        Self { date, sleep: s.map(Into::into), hrv: h.map(Into::into), body_battery: b.map(Into::into) }
+    pub fn new(date: NaiveDate, src: Sources<'_>, with_events: bool) -> Self {
+        let Sources { sleep, hrv, body_battery: bb, daily, readiness } = src;
+
+        let body_battery =
+            (bb.is_some() || daily.and_then(|d| d.body_battery_at_wake).is_some()).then(|| BodyBatteryView {
+                latest: bb.and_then(|b| b.latest_level),
+                latest_at: bb.and_then(|b| local_time(b.latest_at_ms)),
+                at_wake: daily.and_then(|d| d.body_battery_at_wake),
+                highest: bb.and_then(|b| b.highest),
+                lowest: bb.and_then(|b| b.lowest),
+                charged: bb.and_then(|b| b.charged),
+                drained: bb.and_then(|b| b.drained),
+                events: (with_events)
+                    .then(|| daily.map(|d| d.body_battery_events.iter().map(Into::into).collect()))
+                    .flatten(),
+            });
+
+        let rhr_bpm = daily.and_then(|d| d.resting_hr).or_else(|| sleep.and_then(|s| s.resting_heart_rate));
+        let rhr_7d = daily.and_then(|d| d.resting_hr_7d_avg);
+        let resting_hr = non_empty(RestingHrView { bpm: rhr_bpm, avg_7d: rhr_7d }, rhr_bpm.is_some());
+
+        let spo2 = Spo2View {
+            sleep_avg: sleep.and_then(|s| s.avg_spo2),
+            day_avg: daily.and_then(|d| d.avg_spo2),
+            lowest: daily.and_then(|d| d.lowest_spo2),
+        };
+        let any_spo2 = spo2.sleep_avg.is_some() || spo2.day_avg.is_some() || spo2.lowest.is_some();
+
+        let resp = RespirationView {
+            sleep_avg: sleep.and_then(|s| s.avg_respiration),
+            waking_avg: daily.and_then(|d| d.avg_waking_respiration),
+            lowest: daily.and_then(|d| d.lowest_respiration),
+            highest: daily.and_then(|d| d.highest_respiration),
+        };
+        let any_resp = resp.sleep_avg.is_some() || resp.waking_avg.is_some();
+
+        Self {
+            date,
+            sleep: sleep.map(Into::into),
+            hrv: hrv.map(Into::into),
+            training_readiness: readiness.map(Into::into),
+            body_battery,
+            stress: daily.and_then(StressView::from_daily),
+            resting_hr,
+            spo2: non_empty(spo2, any_spo2),
+            respiration: non_empty(resp, any_resp),
+        }
     }
 
     fn sleep_hours(&self) -> Option<f64> {
@@ -353,10 +567,16 @@ impl DayView {
             .or_else(|| self.sleep.as_ref().and_then(|s| s.avg_overnight_hrv_ms))
     }
     fn resting_hr(&self) -> Option<f64> {
-        self.sleep.as_ref()?.resting_hr.map(|v| v as f64)
+        self.resting_hr.as_ref()?.bpm.map(|v| v as f64)
     }
     fn bb_peak(&self) -> Option<f64> {
         self.body_battery.as_ref()?.highest.map(|v| v as f64)
+    }
+    fn avg_stress(&self) -> Option<f64> {
+        self.stress.as_ref()?.avg.map(|v| v as f64)
+    }
+    fn readiness(&self) -> Option<f64> {
+        self.training_readiness.as_ref()?.score.map(|v| v as f64)
     }
 }
 
@@ -367,6 +587,8 @@ pub struct Baseline {
     pub hrv_last_night_ms: Option<f64>,
     pub resting_hr: Option<f64>,
     pub body_battery_peak: Option<f64>,
+    pub avg_stress: Option<f64>,
+    pub training_readiness: Option<f64>,
     pub days_with_sleep: usize,
 }
 
@@ -383,6 +605,8 @@ impl Baseline {
             hrv_last_night_ms: mean(days.iter().filter_map(DayView::hrv)),
             resting_hr: mean(days.iter().filter_map(DayView::resting_hr)),
             body_battery_peak: mean(days.iter().filter_map(DayView::bb_peak)),
+            avg_stress: mean(days.iter().filter_map(DayView::avg_stress)),
+            training_readiness: mean(days.iter().filter_map(DayView::readiness)),
             days_with_sleep: days.iter().filter(|d| d.sleep.is_some()).count(),
         }
     }
@@ -396,10 +620,13 @@ pub struct Comparison {
     pub hrv_last_night_ms: Option<f64>,
     pub resting_hr: Option<f64>,
     pub body_battery_peak: Option<f64>,
+    pub training_readiness: Option<f64>,
+    /// Yesterday's full-day stress against the baseline (today's is incomplete).
+    pub avg_stress_yesterday: Option<f64>,
 }
 
 impl Comparison {
-    fn new(day: &DayView, base: &Baseline) -> Self {
+    fn new(day: &DayView, stress_yesterday: Option<&StressView>, base: &Baseline) -> Self {
         let diff = |a: Option<f64>, b: Option<f64>| Some(round1(a? - b?));
         Self {
             sleep_hours: diff(day.sleep_hours(), base.sleep_hours),
@@ -407,6 +634,11 @@ impl Comparison {
             hrv_last_night_ms: diff(day.hrv(), base.hrv_last_night_ms),
             resting_hr: diff(day.resting_hr(), base.resting_hr),
             body_battery_peak: diff(day.bb_peak(), base.body_battery_peak),
+            training_readiness: diff(day.readiness(), base.training_readiness),
+            avg_stress_yesterday: diff(
+                stress_yesterday.and_then(|s| s.avg).map(|v| v as f64),
+                base.avg_stress,
+            ),
         }
     }
 }
@@ -415,6 +647,7 @@ impl Comparison {
 pub struct Snapshot {
     #[serde(flatten)]
     pub day: DayView,
+    pub stress_yesterday: Option<StressView>,
     pub baseline_28d: Baseline,
     pub vs_baseline: Comparison,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -492,7 +725,7 @@ mod tests {
 
     #[test]
     fn baseline_and_comparison() {
-        let day = |hours: f64, score: i64| DayView {
+        let day = |hours: f64, score: i64, stress: i64| DayView {
             date: "2026-11-01".parse().unwrap(),
             sleep: Some(SleepView {
                 hours: Some(hours),
@@ -504,26 +737,61 @@ mod tests {
                 light_min: None,
                 rem_min: None,
                 awake_min: None,
-                resting_hr: Some(50),
                 avg_overnight_hrv_ms: Some(60.0),
                 body_battery_recharged: None,
                 avg_sleep_stress: None,
-                avg_spo2: None,
-                avg_respiration: None,
             }),
             hrv: None,
+            training_readiness: None,
             body_battery: None,
+            stress: Some(StressView {
+                avg: Some(stress),
+                max: None,
+                label: None,
+                rest_min: None,
+                low_min: None,
+                medium_min: None,
+                high_min: None,
+                activity_min: None,
+            }),
+            resting_hr: Some(RestingHrView { bpm: Some(50), avg_7d: None }),
+            spo2: None,
+            respiration: None,
         };
-        let base = Baseline::from_days(&[day(7.0, 70), day(8.0, 80)]);
+        let base = Baseline::from_days(&[day(7.0, 70, 20), day(8.0, 80, 30)]);
         assert_eq!(base.sleep_hours, Some(7.5));
         assert_eq!(base.sleep_score, Some(75.0));
         assert_eq!(base.hrv_last_night_ms, Some(60.0));
+        assert_eq!(base.resting_hr, Some(50.0));
+        assert_eq!(base.avg_stress, Some(25.0));
+        assert_eq!(base.training_readiness, None);
         assert_eq!(base.days_with_sleep, 2);
 
-        let cmp = Comparison::new(&day(6.0, 65), &base);
+        let today = day(6.0, 65, 99);
+        let yesterday = day(7.0, 70, 40).stress;
+        let cmp = Comparison::new(&today, yesterday.as_ref(), &base);
         assert_eq!(cmp.sleep_hours, Some(-1.5));
         assert_eq!(cmp.sleep_score, Some(-10.0));
         assert_eq!(cmp.body_battery_peak, None);
+        // Uses yesterday's full day, not today's partial stress.
+        assert_eq!(cmp.avg_stress_yesterday, Some(15.0));
+    }
+
+    #[test]
+    fn resting_hr_falls_back_to_sleep_data() {
+        let sleep = SleepDay::from_raw(
+            "2026-11-07".parse().unwrap(),
+            &serde_json::json!({"dailySleepDTO": {"sleepTimeSeconds": 25000}, "restingHeartRate": 47}),
+        )
+        .unwrap();
+        let view = DayView::new(
+            "2026-11-07".parse().unwrap(),
+            Sources { sleep: Some(&sleep), ..Default::default() },
+            false,
+        );
+        assert_eq!(view.resting_hr.unwrap().bpm, Some(47));
+        assert!(view.stress.is_none());
+        assert!(view.spo2.is_none());
     }
 
     #[test]
@@ -566,6 +834,18 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("GET"))
+            .and(path("/usersummary-service/usersummary/daily/runner"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(fixture("daily_summary.json")))
+            .expect(29)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/metrics-service/metrics/trainingreadiness/\d{4}-\d{2}-\d{2}$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(fixture("training_readiness.json")))
+            .expect(29)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
             .and(path("/wellness-service/wellness/bodyBattery/reports/daily"))
             .respond_with(ResponseTemplate::new(200).set_body_json(fixture("body_battery.json")))
             .expect(1)
@@ -597,6 +877,31 @@ mod tests {
         // Body Battery only had data for the 7th, so the baseline peak is missing.
         assert_eq!(first.baseline_28d.body_battery_peak, None);
         assert!(dir.path().join("sleep/2026-10-10.json").exists());
+        assert!(dir.path().join("daily_summary/2026-10-10.json").exists());
+
+        let tr = first.day.training_readiness.as_ref().unwrap();
+        assert_eq!(tr.score, Some(68));
+        assert_eq!(tr.recovery_time_hours, Some(21.0));
+        assert_eq!(tr.factors["hrv"].percent, Some(90));
+        assert_eq!(tr.calculated_at.as_deref(), Some("07:35"));
+        assert_eq!(first.day.stress.as_ref().unwrap().high_min, Some(22));
+        assert_eq!(first.stress_yesterday.as_ref().unwrap().avg, Some(27));
+        assert_eq!(first.day.resting_hr.as_ref().unwrap().bpm, Some(49));
+        assert_eq!(first.day.spo2.as_ref().unwrap().sleep_avg, Some(95.0));
+        assert_eq!(first.day.spo2.as_ref().unwrap().lowest, Some(89));
+        assert_eq!(first.day.respiration.as_ref().unwrap().waking_avg, Some(15.0));
+        let bb = first.day.body_battery.as_ref().unwrap();
+        assert_eq!(bb.at_wake, Some(84));
+        let events = bb.events.as_ref().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].impact, Some(-14));
+        assert_eq!(events[1].duration_min, Some(59));
+        assert_eq!(first.baseline_28d.training_readiness, Some(68.0));
+        assert_eq!(first.vs_baseline.avg_stress_yesterday, Some(0.0));
+
+        // History rows leave out the event lists.
+        let history = r.history("2026-11-06".parse().unwrap(), date).await.unwrap();
+        assert!(history.days.iter().all(|d| d.body_battery.as_ref().unwrap().events.is_none()));
 
         // Second call within 30 minutes: everything comes from disk.
         let second = r.snapshot(date).await.unwrap();

@@ -2,8 +2,9 @@
 
 [![CI](https://github.com/peilertsen/garmin-connector/actions/workflows/ci.yml/badge.svg)](https://github.com/peilertsen/garmin-connector/actions/workflows/ci.yml)
 
-Give Claude read access to your Garmin **sleep**, **HRV** and **Body Battery** data, so your
-morning briefing can tell you how you recovered and how to approach the day.
+Give Claude read access to your Garmin **sleep**, **HRV**, **Training Readiness**, **Body
+Battery**, **stress**, **resting heart rate**, **SpO2** and **respiration** data, so your morning
+briefing can tell you how you recovered and how to approach the day.
 
 Written in Rust. Runs on your own machine. Your Garmin data and login tokens never leave it,
 except for the requests to Garmin itself.
@@ -16,7 +17,7 @@ except for the requests to Garmin itself.
 
 | Crate | What it is |
 |-------|------------|
-| [`garmin-connect`](crates/garmin-connect) | A reusable async Rust client for Garmin Connect: login (with two-factor), token refresh, and typed sleep / HRV / Body Battery data. No MCP or Claude specifics. |
+| [`garmin-connect`](crates/garmin-connect) | A reusable async Rust client for Garmin Connect: login (with two-factor), token refresh, and typed sleep, HRV, Body Battery, daily summary (stress, resting HR, SpO2, respiration) and Training Readiness data. No MCP or Claude specifics. |
 | [`garmin-mcp`](crates/garmin-mcp) | An [MCP](https://modelcontextprotocol.io) server and CLI built on the client. Keeps a local JSON history and serves it to Claude. |
 
 ## Install
@@ -53,7 +54,8 @@ garmin-mcp status
 garmin-mcp today
 ```
 
-The first `today` downloads 29 days (last night plus a 28-day baseline), which takes a few seconds.
+The first `today` downloads 29 days (last night plus a 28-day baseline), about 120 requests, which takes
+under a minute. After that only new or recent days are fetched.
 
 ## Connect it to Claude Desktop
 
@@ -88,7 +90,7 @@ chat, ask *"How did I sleep last night?"* If it doesn't appear, the server's log
 
 | Tool | Use |
 |------|-----|
-| `get_recovery_snapshot` | Last night's sleep (hours, score, stages, bed and wake time, resting HR), HRV (last night, weekly average, status, your balanced range) and Body Battery (now, peak, low), next to your own 28-day baseline and the difference from it. Built for a daily briefing. |
+| `get_recovery_snapshot` | Last night's sleep (hours, score, stages, bed and wake time), HRV (last night, weekly average, status, your balanced range), Training Readiness (score, level, recovery time, contributing factors), Body Battery (now, at wake, peak, low, and what charged or drained it), stress (today so far and yesterday), resting heart rate, SpO2 and respiration, next to your own 28-day baseline and the difference from it. Built for a daily briefing. |
 | `get_recovery_history` | One row per day for up to 92 days, for trends and looking for patterns. |
 | `get_garmin_raw` | Garmin's original JSON for one dataset and day, for fields the summaries leave out. |
 
@@ -114,6 +116,8 @@ garmin-connector/
     sleep/2026-11-07.json
     hrv/2026-11-07.json
     body_battery/2026-11-07.json
+    daily_summary/2026-11-07.json       stress, resting HR, SpO2, respiration, Body Battery events
+    training_readiness/2026-11-07.json
 ```
 
 Each day file holds Garmin's original response plus the summary extracted from it, so

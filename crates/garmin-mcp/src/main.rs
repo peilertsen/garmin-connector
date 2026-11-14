@@ -19,7 +19,10 @@ use crate::recovery::Recovery;
 use crate::store::Store;
 
 #[derive(Parser)]
-#[command(version, about = "Garmin sleep, HRV and Body Battery for Claude (unofficial)")]
+#[command(
+    version,
+    about = "Garmin sleep, HRV, Body Battery, stress and Training Readiness for Claude (unofficial)"
+)]
 struct Cli {
     /// Folder for login tokens and stored data.
     /// Defaults to ~/Library/Application Support/garmin-connector on macOS.
@@ -58,6 +61,16 @@ enum Command {
     Sync {
         #[arg(long, default_value_t = 28)]
         days: i64,
+    },
+    /// Print the raw JSON of any connectapi endpoint (for debugging and
+    /// adding new metrics). `{name}` in the path is replaced by your display name.
+    #[command(hide = true)]
+    DebugGet {
+        /// Path, e.g. /metrics-service/metrics/trainingreadiness/2026-11-14
+        path: String,
+        /// Query parameters as key=value.
+        #[arg(long = "query", short = 'q')]
+        query: Vec<String>,
     },
 }
 
@@ -139,6 +152,21 @@ async fn main() -> Result<()> {
                 eprintln!("warning: {w}");
             }
             println!("Done. Data is in {}", paths.data().display());
+        }
+        Command::DebugGet { path, query } => {
+            let name = if path.contains("{name}") { client.display_name().await? } else { String::new() };
+            let path = path.replace("{name}", &name);
+            let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+            let query: Vec<(&str, String)> = query
+                .iter()
+                .map(|kv| {
+                    kv.split_once('=').map(|(k, v)| (k, v.to_string())).context("query must be key=value")
+                })
+                .collect::<Result<_>>()?;
+            match client.get_json(&segments, &query).await? {
+                Some(v) => println!("{}", serde_json::to_string_pretty(&v)?),
+                None => println!("(no content)"),
+            }
         }
     }
     Ok(())

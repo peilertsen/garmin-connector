@@ -1,6 +1,6 @@
 [package]
 name = "garmin-connect"
-description = "Unofficial async Rust client for Garmin Connect wellness data (sleep, Body Battery, HRV)"
+description = "Unofficial async Rust client for Garmin Connect wellness data: sleep, HRV, Body Battery, stress, SpO2, Training Readiness"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

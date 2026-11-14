@@ -11,7 +11,7 @@ use tokio::sync::{Mutex, OnceCell};
 use crate::auth::{self, LoginOptions, MfaMethod};
 use crate::endpoints::Endpoints;
 use crate::error::{Error, Result};
-use crate::models::{BodyBatteryDay, HrvDay, SleepDay};
+use crate::models::{BodyBatteryDay, DailySummary, HrvDay, SleepDay, TrainingReadiness};
 use crate::tokens::{TokenStore, Tokens};
 
 /// Refresh the access token when it has less than this many seconds left.
@@ -207,6 +207,36 @@ impl GarminClient {
     /// HRV summary for the night ending on `date`, or `None` if not available.
     pub async fn hrv(&self, date: NaiveDate) -> Result<Option<HrvDay>> {
         Ok(self.hrv_raw(date).await?.and_then(|raw| HrvDay::from_raw(date, &raw)))
+    }
+
+    // ---------------------------------------------------- daily summary --
+
+    /// Raw whole-day summary for `date` (stress, resting HR, SpO2, respiration,
+    /// Body Battery events).
+    pub async fn daily_summary_raw(&self, date: NaiveDate) -> Result<Option<Value>> {
+        let name = self.display_name().await?;
+        self.get_json(
+            &["usersummary-service", "usersummary", "daily", &name],
+            &[("calendarDate", date.to_string())],
+        )
+        .await
+    }
+
+    /// Whole-day summary for `date`, or `None` if the watch recorded nothing.
+    pub async fn daily_summary(&self, date: NaiveDate) -> Result<Option<DailySummary>> {
+        Ok(self.daily_summary_raw(date).await?.and_then(|raw| DailySummary::from_raw(date, &raw)))
+    }
+
+    // ----------------------------------------------- training readiness --
+
+    /// Raw Training Readiness entries for `date` (Garmin recalculates during the day).
+    pub async fn training_readiness_raw(&self, date: NaiveDate) -> Result<Option<Value>> {
+        self.get_json(&["metrics-service", "metrics", "trainingreadiness", &date.to_string()], &[]).await
+    }
+
+    /// The morning Training Readiness for `date`, or `None` if not available.
+    pub async fn training_readiness(&self, date: NaiveDate) -> Result<Option<TrainingReadiness>> {
+        Ok(self.training_readiness_raw(date).await?.and_then(|raw| TrainingReadiness::from_raw(date, &raw)))
     }
 
     // ----------------------------------------------------- Body Battery --

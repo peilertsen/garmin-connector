@@ -233,6 +233,55 @@ async fn fetches_and_parses_wellness_data() {
 }
 
 #[tokio::test]
+async fn fetches_daily_summary_and_training_readiness() {
+    let server = MockServer::start().await;
+    mock_profile(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/usersummary-service/usersummary/daily/runner%2042"))
+        .and(query_param("calendarDate", "2026-11-07"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fixture("daily_summary.json")))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/metrics-service/metrics/trainingreadiness/2026-11-07"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fixture("training_readiness.json")))
+        .mount(&server)
+        .await;
+
+    let client = logged_in(&server).await;
+    let date = "2026-11-07".parse().unwrap();
+
+    let day = client.daily_summary(date).await.unwrap().unwrap();
+    assert_eq!(day.resting_hr, Some(49));
+    assert_eq!(day.resting_hr_7d_avg, Some(51));
+    assert_eq!(day.avg_stress, Some(27));
+    assert_eq!(day.stress_label.as_deref(), Some("BALANCED"));
+    assert_eq!(day.high_stress_seconds, Some(1320));
+    assert_eq!(day.lowest_spo2, Some(89));
+    assert_eq!(day.avg_waking_respiration, Some(15.0));
+    assert_eq!(day.body_battery_at_wake, Some(84));
+    assert_eq!(day.body_battery_events.len(), 2);
+    let run = &day.body_battery_events[1];
+    assert_eq!(run.event_type.as_deref(), Some("ACTIVITY"));
+    assert_eq!(run.impact, Some(-14));
+    assert_eq!(run.duration_seconds, Some(3540));
+    assert_eq!(run.activity_name.as_deref(), Some("Morning Run"));
+    assert_eq!(run.start_gmt.unwrap().to_rfc3339(), "2026-11-07T15:05:00+00:00");
+    // "NONE" feedback is noise and is dropped.
+    assert_eq!(day.body_battery_events[0].feedback, None);
+
+    // The morning (after wake-up) entry wins over the later realtime update.
+    let tr = client.training_readiness(date).await.unwrap().unwrap();
+    assert_eq!(tr.score, Some(68));
+    assert_eq!(tr.level.as_deref(), Some("MODERATE"));
+    assert_eq!(tr.recovery_time_minutes, Some(1260));
+    assert_eq!(tr.factors.len(), 6);
+    let hrv = tr.factors.iter().find(|f| f.name == "hrv").unwrap();
+    assert_eq!(hrv.percent, Some(90));
+    assert_eq!(hrv.feedback.as_deref(), Some("GOOD"));
+}
+
+#[tokio::test]
 async fn hrv_no_content_is_none() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

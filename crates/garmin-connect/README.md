@@ -1,6 +1,7 @@
 # garmin-connect
 
-Unofficial async Rust client for Garmin Connect wellness data: sleep, HRV and Body Battery.
+Unofficial async Rust client for Garmin Connect wellness data: sleep, HRV, Body Battery, stress,
+resting heart rate, SpO2, respiration and Training Readiness.
 
 Garmin has no API for personal use, so this crate logs in the way the Garmin Connect mobile
 app does (SSO with optional two-factor, then a DI OAuth2 token) and reads the same endpoints.
@@ -24,13 +25,15 @@ let date = "2026-11-07".parse().unwrap();
 let sleep = client.sleep(date).await?;
 let hrv = client.hrv(date).await?;
 let battery = client.body_battery(date).await?;
+let day = client.daily_summary(date).await?;          // stress, resting HR, SpO2, respiration
+let readiness = client.training_readiness(date).await?;
 # Ok(()) }
 ```
 
-- **Typed summaries:** `SleepDay`, `HrvDay` and `BodyBatteryDay` keep the useful numbers. Every
-  field is optional, because Garmin leaves out whatever your watch doesn't record.
-- **Raw access:** `sleep_raw`, `hrv_raw`, `body_battery_raw`, and `get_json` for any other
-  connectapi endpoint.
+- **Typed summaries:** `SleepDay`, `HrvDay`, `BodyBatteryDay`, `DailySummary` and
+  `TrainingReadiness` keep the useful numbers. Every field is optional, because Garmin leaves
+  out whatever your watch doesn't record.
+- **Raw access:** a `*_raw` method for each, and `get_json` for any other connectapi endpoint.
 - **Token storage:** `FileTokenStore` writes owner-only files atomically. Implement `TokenStore`
   to keep tokens in a keychain or a database instead.
 - **Errors you can act on:** `InvalidCredentials`, `RateLimited`, `Blocked`, `NotLoggedIn`, ...

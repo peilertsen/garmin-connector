@@ -1,0 +1,51 @@
+{
+  "userProfileId": 12345678,
+  "calendarDate": "2026-11-07",
+  "totalSteps": 8421,
+  "restingHeartRate": 49,
+  "lastSevenDaysAvgRestingHeartRate": 51,
+  "minHeartRate": 46,
+  "maxHeartRate": 158,
+  "averageStressLevel": 27,
+  "maxStressLevel": 91,
+  "stressQualifier": "BALANCED",
+  "restStressDuration": 30960,
+  "lowStressDuration": 15240,
+  "mediumStressDuration": 4860,
+  "highStressDuration": 1320,
+  "activityStressDuration": 3780,
+  "uncategorizedStressDuration": 900,
+  "averageSpo2": 96.0,
+  "lowestSpo2": 89,
+  "latestSpo2": 97,
+  "avgWakingRespirationValue": 15.0,
+  "lowestRespirationValue": 9.0,
+  "highestRespirationValue": 24.0,
+  "bodyBatteryAtWakeTime": 84,
+  "bodyBatteryHighestValue": 88,
+  "bodyBatteryLowestValue": 31,
+  "bodyBatteryActivityEventList": [
+    {
+      "eventType": "SLEEP",
+      "eventStartTimeGmt": "2026-11-06T22:30:00.0",
+      "durationInMilliseconds": 28200000,
+      "bodyBatteryImpact": 54,
+      "feedbackType": "NONE",
+      "shortFeedback": "NONE",
+      "activityName": null,
+      "activityType": null,
+      "activityId": null
+    },
+    {
+      "eventType": "ACTIVITY",
+      "eventStartTimeGmt": "2026-11-07T15:05:00.0",
+      "durationInMilliseconds": 3540000,
+      "bodyBatteryImpact": -14,
+      "feedbackType": "EXERCISE_TRAINING_EFFECT_3",
+      "shortFeedback": "IMPROVING_AEROBIC_BASE",
+      "activityName": "Morning Run",
+      "activityType": "running",
+      "activityId": 987654321
+    }
+  ]
+}

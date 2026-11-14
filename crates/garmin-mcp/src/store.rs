@@ -5,6 +5,8 @@
 //!   sleep/2026-11-07.json
 //!   hrv/2026-11-07.json
 //!   body_battery/2026-11-07.json
+//!   daily_summary/2026-11-07.json
+//!   training_readiness/2026-11-07.json
 //! ```
 //!
 //! Each file keeps Garmin's original response next to the summary we
@@ -24,6 +26,9 @@ pub enum Metric {
     Sleep,
     Hrv,
     BodyBattery,
+    /// Stress, resting HR, SpO2, respiration and Body Battery events.
+    DailySummary,
+    TrainingReadiness,
 }
 
 impl Metric {
@@ -32,6 +37,8 @@ impl Metric {
             Metric::Sleep => "sleep",
             Metric::Hrv => "hrv",
             Metric::BodyBattery => "body_battery",
+            Metric::DailySummary => "daily_summary",
+            Metric::TrainingReadiness => "training_readiness",
         }
     }
 }

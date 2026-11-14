@@ -1,6 +1,6 @@
 [package]
 name = "garmin-mcp"
-description = "MCP server that gives Claude access to your Garmin sleep, Body Battery and HRV data"
+description = "MCP server that gives Claude access to your Garmin sleep, HRV, Body Battery, stress and Training Readiness data"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
